@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::Read;
 use macroquad::prelude::*;
 
-pub const QUAD: f32 = 15.0;
 const MEM_SIZE: usize = 0x1000;
 const DISPLAY_SIZE: usize = 64 * 32;
 
@@ -31,11 +30,10 @@ pub struct Chip {
     pc: u16,
     i: u16,
     stack: Vec<u16>,
-    pub dt: u8,
-    pub st: u8,
+    dt: u8,
+    st: u8,
     regist: [u8; 0x10],
-    game_size: u16,
-    allow_draw: bool
+    game_size: u16
 }
 
 impl Chip {
@@ -54,13 +52,12 @@ impl Chip {
             st: 0,
             regist: [0; 0x10],
             game_size: 0,
-            allow_draw: false
         }
     }
 
     pub fn load_game(&mut self) {
-        let mut file = File::open("data/breakout.ch8").expect("file not find!");
-        let data_size = std::fs::metadata("data/breakout.ch8").expect("file not find!");
+        let mut file = File::open("data/Pong.ch8").expect("file not find!");
+        let data_size = std::fs::metadata("data/Pong.ch8").expect("file not find!");
         let mut buffer = vec![0; data_size.len() as usize];
         file.read(&mut buffer).expect("buffer overflow");
         for i in  0..buffer.len() {
@@ -71,6 +68,7 @@ impl Chip {
     }
 
     pub fn emular(&mut self) {
+
         let opcode = (self.mem[self.pc as usize] as u16) << 8 | self.mem[(self.pc + 1) as usize] as u16;
         let p: u16 = (opcode & 0xF000) >> 12;
         let x = ((opcode & 0x0F00) >> 8) as u8;
@@ -83,48 +81,32 @@ impl Chip {
         println!("{}: {:04x}", self.pc, opcode);
         match (p, x, y, n) {
             (0x0, 0x0, 0xE, 0x0) => self.display = [0;64 * 32],
-            (0x0, 0x0, 0xE, 0xE) => self.pc = self.stack.pop().expect("vetor vazio") - 2,
+            (0x0, 0x0, 0xE, 0xE) => {
+                println!("{:?}", self.stack);
+                self.pc = self.stack[self.stack.len() - 1] - 2;
+                println!("{:?}", self.stack);
+                self.stack.pop();
+                
+            },
             (0x1, ..) => self.pc = nnn - 2,
             (0x2, ..) => {
-                self.stack.push(self.pc + 2);
+                self.stack.push(nnn);
                 self.pc = nnn - 2;
             },
             (0x3, ..) => if vx == nn {self.pc += 2},
             (0x4, ..) => if vx != nn {self.pc += 2},
             (0x5, ..) => if vx == vy {self.pc += 2},
             (0x6, ..) => self.regist[x as usize] = nn,
-            (0x7, ..) => {
-                let result = vx as u16 + nn as u16;
-                self.regist[x as usize] = result as u8;
-            },
+            (0x7, ..) => self.regist[x as usize] += nn,
             (0x8, .., 0x0) => self.regist[x as usize] = vy,
             (0x8, .., 0x1) => self.regist[x as usize] |= vy,
             (0x8, .., 0x2) => self.regist[x as usize] &= vy,
             (0x8, .., 0x3) => self.regist[x as usize] ^= vy,
-            (0x8, .., 0x4) => {
-                let result = vx as u16 + vy as u16;
-                self.regist[0xF] = if result > 0xFF {1} else {0};
-                self.regist[x as usize] = result as u8;
-                
-            },
-            (0x8, .., 0x5) => {
-                self.regist[0xF] = if vx > vy {1} else {0};
-                let result = vx as i16 - vy as i16;
-                self.regist[x as usize] = result as u8;
-            },
-            (0x8, .., 0x6) => {
-                self.regist[0xF] = 1 & vx;
-                self.regist[x as usize] >>=1
-            },
-            (0x8, .., 0x7) => {
-                self.regist[0xF] = if vy > vx {1} else {0};
-                let result = vy as i16 - vx as i16;
-                self.regist[x as usize] = result as u8;
-            },
-            (0x8, .., 0xE) => {
-                self.regist[0xF] = (0b10000000 & vx) >> 7;
-                self.regist[x as usize] <<= 1; 
-            },
+            (0x8, .., 0x4) => self.regist[x as usize] += vy,
+            (0x8, .., 0x5) => self.regist[x as usize] -= vy,
+            (0x8, .., 0x6) => self.regist[x as usize] >>= 1,
+            (0x8, .., 0x7) => self.regist[x as usize] = vy - self.regist[x as usize],
+            (0x8, .., 0xE) => self.regist[x as usize] <<= 1,
             (0x9, ..) => if vx != vy {self.pc += 2},
             (0xA, ..) => self.i = nnn,
             (0xB, ..) => self.pc = self.regist[0] as u16 + nnn - 2,
@@ -143,7 +125,6 @@ impl Chip {
                         }
                     }
                 }
-                self.allow_draw = true;
             },
             (0xE, _, 0x9, 0xE) => if is_key(self.regist[x as usize]) {self.pc += 2},
             (0xE, _, 0xA, 0x1) => if !is_key(self.regist[x as usize]) {self.pc += 2},
@@ -154,9 +135,11 @@ impl Chip {
             (0xF, _, 0x1, 0xE) => self.i += self.regist[x as usize] as u16,
             (0xF, _, 0x2, 0x9) => self.i = 0x50 + vx as u16 * 5,
             (0xF, _, 0x3, 0x3) => {
-                self.mem[self.i as usize] = vx / 100;
-                self.mem[self.i as usize + 1] = (vx % 100) / 10;
-                self.mem[self.i as usize + 2] = vx % 10;
+                let mut exp = 2; 
+                for c in 0..3 {
+                    self.mem[self.i as usize + c] = vx / 10u8.pow(exp) % 10;
+                    exp -= 1;
+                }
             },
             (0xF, _, 0x5, 0x5) => {
                 for c in 0..=x as u16 {
@@ -174,20 +157,14 @@ impl Chip {
         //self.pc = if self.pc + 2 < self.game_size {self.pc + 2} else {0x200};
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&self) {
         for y in 0..32 {
             for x in 0..64 {
-                draw_rectangle(x as f32 * QUAD, y as f32 * QUAD, QUAD, QUAD, if self.display[y * 64 + x] == 0 { BLACK } else { WHITE }) 
+                draw_rectangle(x as f32 * 10., y as f32 *10.,10.,10., if self.display[y * 64 + x] == 0 { BLACK } else { WHITE }) 
             }
         }
-        self.allow_draw = false;
     }
-    pub fn ciclo(&mut self) {
-        while !self.allow_draw {
-            self.emular();
-        }
-        self.render();
-    } 
+    
 }
 
 fn is_key(key: u8) -> bool {
@@ -239,9 +216,9 @@ fn input() -> Option<u8> {
     Some(key_pressed)
 }
 
-// 6
-// a
-// d
-// 7
-// 3
-// 1
+// 00E0 (clear screen)
+// 1NNN (jump)
+// 6XNN (set register VX)
+// 7XNN (add value to register VX)
+// ANNN (set index register I)
+// DXYN (display/draw)
